@@ -1,0 +1,38 @@
+{
+  "name": "anki-pebble",
+  "author": "fanu",
+  "version": "1.0.0",
+  "keywords": ["pebble-app"],
+  "private": true,
+  "dependencies": {
+    "pebble-clay": "^1.0.4"
+  },
+  "pebble": {
+    "displayName": "Anki",
+    "uuid": "d37dd334-1281-4721-a28a-df46e97fe304",
+    "sdkVersion": "3",
+    "enableMultiJS": true,
+    "targetPlatforms": [
+      "emery"
+    ],
+    "watchapp": {
+      "watchface": false
+    },
+    "messageKeys": [
+      "CMD",
+      "DECK_ID",
+      "CARD_ID",
+      "EASE",
+      "MSG_TYPE",
+      "DECKS",
+      "FRONT",
+      "BACK",
+      "ERR",
+      "BACKEND_URL",
+      "API_TOKEN"
+    ],
+    "resources": {
+      "media": []
+    }
+  }
+}

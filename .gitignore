@@ -1,0 +1,17 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# secrets & local data
+backend/.env
+backend/data/
+
+# Pebble build output
+pebble/build/
+pebble/node_modules/
+pebble/.lock-waf*
+*.pbw
+
+# misc
+.DS_Store
