@@ -92,8 +92,13 @@ class AnkiClient:
                 self._auth = self.col.sync_login(self._username, self._password)
         return self._auth
 
-    def sync(self) -> str:
-        """Sync the local collection with AnkiWeb. Returns a short status string."""
+    def sync(self, allow_full: bool = True) -> str:
+        """Sync with AnkiWeb. Returns a short status string.
+
+        allow_full=False (used by the periodic background sync) refuses a full
+        sync, so it can never overwrite un-synced wrist reviews with the server
+        copy. Full syncs are only auto-resolved at startup / on explicit /sync.
+        """
         with self._lock:
             auth = self._login()
             # sync_media=False: the watch only shows text, so skip media sync.
@@ -108,6 +113,10 @@ class AnkiClient:
             req = int(out.required)
             if req <= 1:
                 return f"synced ({req})"
+            if not allow_full:
+                # Refuse to auto-resolve a full sync in the background — it would
+                # discard wrist reviews not yet pushed. Leave it for /sync / desktop.
+                return f"full_required_skipped ({req})"
             # A full sync is required (first run is FULL_DOWNLOAD). The server is the
             # source of truth here, so anything but FULL_UPLOAD is a download.
             upload = req == 4

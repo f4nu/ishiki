@@ -1,0 +1,17 @@
+services:
+  anki-pebble:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      COLLECTION_PATH: /data/collection.anki2
+      # SYNC_INTERVAL: 120   # seconds between background syncs (optional override)
+    volumes:
+      - anki-data:/data        # persists the synced collection across restarts
+    # Bound to localhost; terminate TLS with your own reverse proxy in front.
+    # If your proxy runs in Docker too, put both on a shared network instead.
+    ports:
+      - "127.0.0.1:8000:8000"
+
+volumes:
+  anki-data:

@@ -265,6 +265,11 @@ python smoke_test.py        # offline logic check (no account)
 uvicorn app:app --port 8000 # first run does a full download into backend/data/
 ```
 
+**Deploy (Docker, single-user):** `cd backend && docker compose up -d --build` — persists
+the collection in a volume, **background auto-syncs** every `SYNC_INTERVAL`s so wrist
+reviews reach AnkiWeb without manual `/sync` (`allow_full=False` there, so it won't
+clobber un-synced reviews). Listens on 127.0.0.1:8000 — front it with your own TLS proxy.
+
 **Pebble watchapp:**
 ```bash
 # toolchain lives in ~/.pebble-tool-venv (pebble-tool v5.0.36, SDK 4.9.169)

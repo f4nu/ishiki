@@ -74,14 +74,38 @@ collection and exercises decks / next / answer / text-cleaning):
 cd backend && . .venv/bin/activate && python smoke_test.py
 ```
 
-## Exposing the backend to your phone
+## Deploy to a server (Docker)
 
-The phone's Pebble app must be able to reach the backend. Secure options:
+The backend is containerized ([backend/Dockerfile](backend/Dockerfile),
+[backend/docker-compose.yml](backend/docker-compose.yml)). On your server:
 
-- **Tailscale** on both the server and phone — private, no port-forwarding.
-- A small **VPS** with HTTPS (Caddy / Cloudflare Tunnel).
+```bash
+cd backend
+cp .env.example .env        # set ANKI_USERNAME/PASSWORD + API_TOKEN=$(openssl rand -hex 32)
+docker compose up -d --build
+docker compose logs -f      # watch for "initial sync: full_download (3)"
+```
 
-Don't expose it raw on the public internet — the bearer token is the only guard.
+- The collection persists in the `anki-data` volume; reviews **auto-sync** to AnkiWeb
+  every `SYNC_INTERVAL` seconds (default 120) — no manual `/sync` needed.
+- The container listens on **127.0.0.1:8000** (plain HTTP). **Put your own TLS reverse
+  proxy in front** and serve it as `https://your-host` — phones block cleartext HTTP, so
+  HTTPS is required. (If your proxy is also in Docker, drop the `127.0.0.1` binding and
+  join them on a shared network.)
+- Only **one worker** runs — the anki collection is single-writer; don't scale it.
+
+## Install on your watch
+
+1. Build: `cd pebble && pebble build` → `pebble/build/pebble.pbw`.
+2. Get `pebble.pbw` onto your phone (AirDrop / email / cloud / cable).
+3. Open it with the **Pebble (Core Devices) app** — Android: via the file manager or
+   Rebble's *Sideload Helper*; iOS: share to the Pebble Core app. It installs to the watch.
+4. In the Pebble app, open the **Anki** app's **Settings** gear and set:
+   - **Backend URL** = `https://your-host` (your proxied backend)
+   - **API Token** = the `API_TOKEN` from the server's `.env`
+5. Launch **Anki** on the watch — decks load, and you can study.
+
+> The bearer token is the only guard on the API — keep the URL private and use HTTPS.
 
 ## Roadmap
 
@@ -93,7 +117,7 @@ Don't expose it raw on the public internet — the bearer token is the only guar
 - [x] Run in emulator + end-to-end study loop
 - [x] Settings page (Clay): backend URL + API token, set on the phone
 - [x] Color cues (green OK / red Not OK + grade flash) and long-card scrolling
-- [ ] Real-phone deploy (set Tailscale/VPS URL in settings)
+- [x] Dockerized backend + background auto-sync; sideload + settings for real watch
 
 ## Caveats (personal use)
 
