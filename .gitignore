@@ -13,5 +13,14 @@ pebble/node_modules/
 pebble/.lock-waf*
 *.pbw
 
+# Android companion
+companion/.gradle/
+companion/build/
+companion/app/build/
+companion/local.properties
+companion/.idea/
+*.apk
+*.aab
+
 # misc
 .DS_Store

@@ -11,10 +11,21 @@ planned SaaS rewrite should be approached**. Read it fully before changing anyth
 
 ## 0. Resume here (session handoff)
 
-**What this is:** a working **personal prototype** (details in §2) — a Pebble Core Time 2
-watchapp plus a Python FastAPI proxy that syncs your real AnkiWeb collection. It runs
-end-to-end on real hardware and is Dockerized for self-hosting. The multi-user SaaS
-(§4–§9) is **not started**.
+> **Direction change (current focus): the backend is moving on-device.** Instead of the
+> Python proxy logging into AnkiWeb directly (fragile, ToS risk), an Android **companion
+> app** (`companion/`, Kotlin) reads/writes the local **AnkiDroid** collection via its
+> ContentProvider and serves the watch over localhost HTTP. AnkiDroid does the AnkiWeb
+> sync natively. New shape:
+>
+> `AnkiWeb ⇄ AnkiDroid ⇄ (ContentProvider) Ishiki companion ⇄ (localhost:8765) PebbleKit JS ⇄ (BT) watch`
+>
+> The Python backend (§2–§3, §10) is now the **legacy/alternative** path — kept working as
+> a reference/fallback, superseded by the companion. Companion details: `companion/README.md`.
+
+**What this is:** the Pebble Core Time 2 watchapp is **done**. There are two interchangeable
+backends: the legacy Python/AnkiWeb proxy (§2–§3 — runs on real hardware, Dockerized) and
+the new local **AnkiDroid companion** (`companion/` — scaffolded, **not yet built/tested on
+a device**). The multi-user SaaS (§4–§9) is on hold given the local direction.
 
 **Repo / git**
 - Remote: `git@github.com:f4nu/ishiki.git`, branch `main`.
@@ -42,13 +53,17 @@ cd ../pebble && npm install && pebble build   # -> build/pebble.pbw (target: eme
 ```
 
 **Open threads — decide what's next**
-1. **Publish to the Pebble store?** Two blockers: it needs a self-hosted backend (an
-   adoption barrier — be upfront), and the name "Anki" collides with the trademark
-   (rename `displayName` in `pebble/package.json`, e.g. tie it to *ishiki*). Draft store
-   copy is in `pebble/STORE.md`.
-2. **SaaS rewrite** (the stated end goal) — begin at §8 Phase A. **Resolve the AnkiWeb
-   ToS question (§9) before building the paid tier.**
-3. Otherwise it's fully usable as-is for personal use (deploy: §10).
+1. **Finish the AnkiDroid companion** (`companion/`) — the current direction. Scaffolded:
+   `/decks`, `/cards?deckId=`, `/review` over localhost via AnkiDroid's ContentProvider
+   (NanoHTTPD, foreground service). TODO: build in Android Studio + test on a device with
+   AnkiDroid; commit the Gradle wrapper jar; then **update the Pebble side** to the new
+   contract — `/cards` (batch) + `/review`, store-and-forward queue with "Again removed
+   from session", and treat `cardId` as the opaque string `"noteId:ord"` (the watch
+   currently speaks the old `/next` + `/answer` and `parseInt`s the id). Ship APK on GitHub
+   releases, later F-Droid (deps are FOSS). See `companion/README.md` (incl. the
+   no-backdating limitation).
+2. **Pebble store listing** — `pebble/STORE.md` (backend-required + "Anki" name caveats).
+3. **SaaS** (§4–§9) — on hold; the local companion sidesteps the AnkiWeb ToS problem.
 
 ---
 
