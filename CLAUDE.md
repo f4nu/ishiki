@@ -9,6 +9,49 @@ planned SaaS rewrite should be approached**. Read it fully before changing anyth
 
 ---
 
+## 0. Resume here (session handoff)
+
+**What this is:** a working **personal prototype** (details in §2) — a Pebble Core Time 2
+watchapp plus a Python FastAPI proxy that syncs your real AnkiWeb collection. It runs
+end-to-end on real hardware and is Dockerized for self-hosting. The multi-user SaaS
+(§4–§9) is **not started**.
+
+**Repo / git**
+- Remote: `git@github.com:f4nu/ishiki.git`, branch `main`.
+- Commit as **`f4nu <mattiafanuc@gmail.com>`** (NOT mattia@abiby.it). End AI-authored
+  commits with `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
+
+**Not in the repo** (gitignored — must be recreated locally): `backend/.env` (AnkiWeb
+creds + API token), `backend/data/` (the synced collection — rebuilt on first sync),
+`backend/.venv/`, `pebble/node_modules/`, `pebble/build/`. The Pebble toolchain
+(`~/.pebble-tool-venv` + the SDK) is machine-local too.
+
+**Rebuild the environment from a fresh clone**
+```bash
+# backend
+cd backend && python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env            # fill creds + API_TOKEN=$(openssl rand -hex 32)
+python smoke_test.py            # offline sanity check (no account needed)
+
+# pebble toolchain (needs Python 3.10–3.13; we used 3.12)
+python3 -m venv ~/.pebble-tool-venv && ~/.pebble-tool-venv/bin/pip install pebble-tool
+export PATH="$HOME/.pebble-tool-venv/bin:$PATH"
+pebble sdk install latest       # SDK 4.9.x + ARM toolchain
+cd ../pebble && npm install && pebble build   # -> build/pebble.pbw (target: emery)
+```
+
+**Open threads — decide what's next**
+1. **Publish to the Pebble store?** Two blockers: it needs a self-hosted backend (an
+   adoption barrier — be upfront), and the name "Anki" collides with the trademark
+   (rename `displayName` in `pebble/package.json`, e.g. tie it to *ishiki*). Draft store
+   copy is in `pebble/STORE.md`.
+2. **SaaS rewrite** (the stated end goal) — begin at §8 Phase A. **Resolve the AnkiWeb
+   ToS question (§9) before building the paid tier.**
+3. Otherwise it's fully usable as-is for personal use (deploy: §10).
+
+---
+
 ## 1. The one architectural fact that governs everything
 
 **AnkiWeb has no public API, and the only working implementation of the Anki sync
@@ -68,6 +111,9 @@ anki-pebble/
 - ✅ Watchapp **builds** to a `.pbw` for `emery`; runs in the emulator end-to-end.
 - ✅ Phone **settings page** (Clay) sets backend URL + API token; token is not in source.
 - ✅ Color cues (green OK / red Not OK + grade flash) and long-card scrolling.
+- ✅ **Dockerized** backend + **background auto-sync** (wrist reviews propagate to AnkiWeb);
+  image build verified. Listens on 127.0.0.1:8000 behind your own TLS proxy.
+- ✅ Committed & pushed to `f4nu/ishiki` (initial prototype + Docker deploy).
 
 ### Backend REST contract (the watch depends on this — KEEP IT STABLE)
 Auth: `Authorization: Bearer <token>` on every request.
