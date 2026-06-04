@@ -46,12 +46,21 @@ static TextLayer *s_ok;     // green "UP = OK" (back)
 static TextLayer *s_again;  // red "DOWN = Again" (back)
 static bool s_card_loaded = false;
 
+// Connection watchdog: vibrate if a request to the phone/companion doesn't complete.
+// 20s > the JS XHR timeout (15s), so a bridge-reported error arrives first and we
+// buzz once via MSG_ERROR; this timer only fires when nothing replies at all.
+static AppTimer *s_req_timer = NULL;
+#define REQ_TIMEOUT_MS 20000
+static void arm_req_timer(void);
+static void clear_req_timer(void);
+
 // ---- outbox helpers --------------------------------------------------------
 static void send_get_decks(void) {
   DictionaryIterator *it;
   if (app_message_outbox_begin(&it) != APP_MSG_OK) return;
   dict_write_uint8(it, MESSAGE_KEY_CMD, CMD_GET_DECKS);
   app_message_outbox_send();
+  arm_req_timer();
 }
 
 static void send_get_card(const char *deck_id) {
@@ -60,6 +69,7 @@ static void send_get_card(const char *deck_id) {
   dict_write_uint8(it, MESSAGE_KEY_CMD, CMD_GET_CARD);
   dict_write_cstring(it, MESSAGE_KEY_DECK_ID, deck_id);
   app_message_outbox_send();
+  arm_req_timer();
 }
 
 static void send_answer(const char *card_id, int ease, const char *deck_id) {
@@ -70,6 +80,7 @@ static void send_answer(const char *card_id, int ease, const char *deck_id) {
   dict_write_uint8(it, MESSAGE_KEY_EASE, (uint8_t)ease);
   dict_write_cstring(it, MESSAGE_KEY_DECK_ID, deck_id);
   app_message_outbox_send();
+  arm_req_timer();
 }
 
 // ---- deck list parsing -----------------------------------------------------
@@ -332,8 +343,30 @@ static void menu_window_unload(Window *w) {
   s_menu_layer = NULL;
 }
 
+// ---- connection watchdog ---------------------------------------------------
+static void clear_req_timer(void) {
+  if (s_req_timer) {
+    app_timer_cancel(s_req_timer);
+    s_req_timer = NULL;
+  }
+}
+
+static void req_timeout(void *data) {
+  s_req_timer = NULL;
+  vibes_double_pulse();  // nothing replied — the connection didn't go all the way
+  if (s_card_loaded && s_card_state == CARD_LOADING) {
+    show_info("Not connected", "BACK = decks");
+  }
+}
+
+static void arm_req_timer(void) {
+  clear_req_timer();
+  s_req_timer = app_timer_register(REQ_TIMEOUT_MS, req_timeout, NULL);
+}
+
 // ---- app messages ----------------------------------------------------------
 static void inbox_received(DictionaryIterator *iter, void *context) {
+  clear_req_timer();  // a reply arrived — the round trip completed
   Tuple *type_t = dict_find(iter, MESSAGE_KEY_MSG_TYPE);
   if (!type_t) return;
 
@@ -363,6 +396,7 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
       Tuple *e = dict_find(iter, MESSAGE_KEY_ERR);
       const char *msg = e ? e->value->cstring : "Error";
       APP_LOG(APP_LOG_LEVEL_ERROR, "backend error: %s", msg);
+      vibes_double_pulse();  // bridge couldn't reach the companion / AnkiDroid
       show_info(msg, "BACK = decks");
       break;
     }
@@ -371,10 +405,14 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
 
 static void inbox_dropped(AppMessageResult reason, void *context) {
   APP_LOG(APP_LOG_LEVEL_ERROR, "inbox dropped: %d", (int)reason);
+  clear_req_timer();
+  vibes_double_pulse();  // a reply was dropped
 }
 
 static void outbox_failed(DictionaryIterator *iter, AppMessageResult reason, void *context) {
   APP_LOG(APP_LOG_LEVEL_ERROR, "outbox failed: %d", (int)reason);
+  clear_req_timer();
+  vibes_double_pulse();  // couldn't reach the phone over Bluetooth
 }
 
 // ---- app lifecycle ---------------------------------------------------------

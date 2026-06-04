@@ -1,14 +1,13 @@
 // Clay settings schema for the phone-side config page.
-// Reached via the Settings gear on the Pebble app (or `pebble emu-app-config`
-// in the emulator). Values are persisted to localStorage and read back in index.js.
+// Reached via the Settings gear on the Pebble app (or `pebble emu-app-config`).
 module.exports = [
   {
     "type": "heading",
-    "defaultValue": "Anki Settings"
+    "defaultValue": "Ishiki Settings"
   },
   {
     "type": "text",
-    "defaultValue": "Point the watch at your anki-pebble backend."
+    "defaultValue": "By default, connect to the Ishiki companion app running on this phone. The token is only needed for the legacy Python backend."
   },
   {
     "type": "section",
@@ -17,19 +16,19 @@ module.exports = [
         "type": "input",
         "messageKey": "BACKEND_URL",
         "label": "Backend URL",
-        "defaultValue": "http://localhost:8000",
+        "defaultValue": "http://127.0.0.1:8765",
         "attributes": {
-          "placeholder": "https://your-server:8000",
+          "placeholder": "http://127.0.0.1:8765",
           "type": "url"
         }
       },
       {
         "type": "input",
         "messageKey": "API_TOKEN",
-        "label": "API Token",
+        "label": "API Token (optional)",
         "defaultValue": "",
         "attributes": {
-          "placeholder": "API_TOKEN from backend/.env"
+          "placeholder": "only for the legacy Python backend"
         }
       }
     ]

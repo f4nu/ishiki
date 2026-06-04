@@ -41,10 +41,10 @@ Or open `companion/` in Android Studio and Run.
 - **No backdating.** AnkiDroid answers a card *now*; the API can't record a historical
   review time. Same-day submission is fine (Anki intervals are day-granular); only reviews
   queued across midnight drift. `timestamp` is accepted but advisory.
-- **Pebble side not updated yet.** The watch still speaks the old `/next` + `/answer`
-  contract. To use this companion the watch needs to: fetch `/cards` (batch) and cache
-  them, queue reviews and POST `/review` with the opaque string `cardId` (not `parseInt`),
-  and own store-and-forward + "Again removed from session". See repo `CLAUDE.md` §0.
+- **Pebble side is wired up.** `pebble/src/pkjs/index.js` fetches `/cards` as a batch,
+  serves them to the watch one at a time, and queues reviews (with timestamps) to `/review`,
+  flushing whenever the companion is reachable. The C watchapp is unchanged. Set the watch's
+  Backend URL to `http://127.0.0.1:8765` (the companion runs on the same phone).
 - **FGS type** is `specialUse` (fine for sideload / F-Droid; Play Store would need review).
 - Verify on a real device: the `schedule` selection (`"limit=?, deckID=?"`), the card-text
   columns (`question_simple`/`answer_simple`), and the deck-count parsing — all are

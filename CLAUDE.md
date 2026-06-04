@@ -53,15 +53,17 @@ cd ../pebble && npm install && pebble build   # -> build/pebble.pbw (target: eme
 ```
 
 **Open threads — decide what's next**
-1. **Finish the AnkiDroid companion** (`companion/`) — the current direction. Scaffolded:
-   `/decks`, `/cards?deckId=`, `/review` over localhost via AnkiDroid's ContentProvider
-   (NanoHTTPD, foreground service). TODO: build in Android Studio + test on a device with
-   AnkiDroid; commit the Gradle wrapper jar; then **update the Pebble side** to the new
-   contract — `/cards` (batch) + `/review`, store-and-forward queue with "Again removed
-   from session", and treat `cardId` as the opaque string `"noteId:ord"` (the watch
-   currently speaks the old `/next` + `/answer` and `parseInt`s the id). Ship APK on GitHub
-   releases, later F-Droid (deps are FOSS). See `companion/README.md` (incl. the
-   no-backdating limitation).
+1. **AnkiDroid companion** (`companion/`) — the current direction. **Builds to an
+   installable debug APK** (`cd companion && ./gradlew assembleDebug`; SDK at
+   `~/android-sdk`, Gradle wrapper committed). Serves `/decks`, `/cards?deckId=`, `/review`
+   on `127.0.0.1:8765` via AnkiDroid's ContentProvider (NanoHTTPD + foreground service).
+   **The Pebble side is updated to this contract** — store-and-forward lives in
+   `pebble/src/pkjs/index.js` (batch `/cards`, serve one at a time, queue reviews with
+   timestamps in localStorage, flush to `/review`); the **C watchapp is unchanged** and the
+   opaque `cardId="noteId:ord"` flows through it. Settings default to `http://127.0.0.1:8765`.
+   **Remaining: test the companion's AnkiDroid calls on a real device** (the `schedule`
+   query, card-text columns, and review `update` are version-sensitive), then ship the APK
+   on GitHub releases → F-Droid. See `companion/README.md` (no-backdating limitation).
 2. **Pebble store listing** — `pebble/STORE.md` (backend-required + "Anki" name caveats).
 3. **SaaS** (§4–§9) — on hold; the local companion sidesteps the AnkiWeb ToS problem.
 
