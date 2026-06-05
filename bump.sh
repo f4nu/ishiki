@@ -1,30 +1,51 @@
 #!/usr/bin/env bash
-# Bump the version across the Pebble watchapp and the Android companion, then
-# rebuild both artifacts.   Usage:  ./bump.sh 0.2.0
+# Set the per-app versions (from ./versions) and rebuild both artifacts.
+#
+#   ./bump.sh                    apply versions from ./versions, rebuild both
+#   ./bump.sh companion 0.3.0    set companion version in ./versions, then apply
+#   ./bump.sh pebble 1.1.0       set pebble version in ./versions, then apply
 set -euo pipefail
 
-VER="${1:-}"
-if [[ ! "$VER" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  echo "usage: ./bump.sh X.Y.Z   (e.g. ./bump.sh 0.2.0)" >&2
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+VERSIONS="$ROOT/versions"
+
+is_semver() { [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; }
+
+# Optionally update one component's version in the versions file.
+if [ "$#" -eq 2 ]; then
+  comp="$1"; ver="$2"
+  case "$comp" in companion|pebble) ;; *)
+    echo "unknown component: $comp (use companion|pebble)" >&2; exit 1 ;;
+  esac
+  is_semver "$ver" || { echo "bad version: $ver (want X.Y.Z)" >&2; exit 1; }
+  if grep -qE "^$comp=" "$VERSIONS"; then
+    sed -i "s/^$comp=.*/$comp=$ver/" "$VERSIONS"
+  else
+    echo "$comp=$ver" >> "$VERSIONS"
+  fi
+elif [ "$#" -ne 0 ]; then
+  echo "usage: ./bump.sh [companion|pebble X.Y.Z]" >&2
   exit 1
 fi
 
-ROOT="$(cd "$(dirname "$0")" && pwd)"
+get() { grep -E "^$1=" "$VERSIONS" | head -1 | cut -d= -f2- | tr -d '[:space:]'; }
+CV="$(get companion)"
+PV="$(get pebble)"
+is_semver "$CV" || { echo "companion version invalid in versions: '$CV'" >&2; exit 1; }
+is_semver "$PV" || { echo "pebble version invalid in versions: '$PV'" >&2; exit 1; }
 
-# Android versionCode must increase monotonically; derive it from the semver:
-#   major*10000 + minor*100 + patch   (0.2.0 -> 200, 1.0.0 -> 10000)
-IFS=. read -r MA MI PA <<< "$VER"
+# Android versionCode from the companion semver: major*10000 + minor*100 + patch
+IFS=. read -r MA MI PA <<< "$CV"
 CODE=$((10#$MA * 10000 + 10#$MI * 100 + 10#$PA))
 
-echo "Bumping to $VER (Android versionCode $CODE)"
+echo "companion = $CV (versionCode $CODE)"
+echo "pebble    = $PV"
 
-# --- set versions -----------------------------------------------------------
-sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$VER\"/" \
-  "$ROOT/pebble/package.json"
-
+# --- apply versions ---------------------------------------------------------
 GRADLE="$ROOT/companion/app/build.gradle.kts"
-sed -i "s/versionName = \"[^\"]*\"/versionName = \"$VER\"/" "$GRADLE"
+sed -i "s/versionName = \"[^\"]*\"/versionName = \"$CV\"/" "$GRADLE"
 sed -i "s/versionCode = [0-9]*/versionCode = $CODE/"        "$GRADLE"
+sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$PV\"/"    "$ROOT/pebble/package.json"
 
 # --- rebuild ----------------------------------------------------------------
 export PATH="$HOME/.pebble-tool-venv/bin:$PATH"            # our pebble-tool venv
@@ -38,7 +59,7 @@ echo "=== building companion (.apk) ==="
 ( cd "$ROOT/companion" && ./gradlew assembleDebug )
 
 echo
-echo "Done: $VER"
+echo "Done.  companion $CV   pebble $PV"
 echo "  pbw: pebble/build/pebble.pbw"
 echo "  apk: companion/app/build/outputs/apk/debug/app-debug.apk"
-echo "  (remember to add a CHANGELOG.md entry)"
+echo "  (update CHANGELOG.md if needed)"
