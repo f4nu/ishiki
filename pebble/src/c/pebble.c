@@ -283,10 +283,22 @@ static void card_down_click(ClickRecognizerRef rec, void *ctx) {
   else scroll_page(+1);
 }
 
+// Holding Up/Down scrolls the card — lets a long answer scroll on the back, where
+// single-press grades.
+static void card_up_long(ClickRecognizerRef rec, void *ctx) {
+  if (s_card_state == CARD_FRONT || s_card_state == CARD_BACK) scroll_page(-1);
+}
+
+static void card_down_long(ClickRecognizerRef rec, void *ctx) {
+  if (s_card_state == CARD_FRONT || s_card_state == CARD_BACK) scroll_page(+1);
+}
+
 static void card_click_config(void *ctx) {
   window_single_click_subscribe(BUTTON_ID_SELECT, card_select_click);
   window_single_click_subscribe(BUTTON_ID_UP, card_up_click);
   window_single_click_subscribe(BUTTON_ID_DOWN, card_down_click);
+  window_long_click_subscribe(BUTTON_ID_UP, 0, card_up_long, NULL);
+  window_long_click_subscribe(BUTTON_ID_DOWN, 0, card_down_long, NULL);
 }
 
 static void card_window_load(Window *w) {
@@ -382,9 +394,15 @@ static void menu_window_unload(Window *w) {
   s_menu_layer = NULL;
 }
 
-// Fires when the deck list becomes visible (first show, and on Back from a deck):
-// refresh the due counts so they reflect cards just reviewed.
+// Fires when the deck list becomes visible. The initial load comes from PebbleKit
+// JS's 'ready' event, so skip the first appear (launch) to avoid fetching /decks
+// twice; only refresh on later appears (Back from a deck).
 static void menu_window_appear(Window *w) {
+  static bool first = true;
+  if (first) {
+    first = false;
+    return;
+  }
   send_get_decks();
 }
 

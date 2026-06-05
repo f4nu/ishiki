@@ -32,9 +32,11 @@ class BridgeService : Service() {
         server = Httpd(PORT, repo).also {
             try {
                 it.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false)
+                Logs.add("server listening on 127.0.0.1:$PORT")
             } catch (e: Exception) {
                 it.stop()
                 server = null
+                Logs.add("ERR server failed to start: ${e.message}")
             }
         }
     }
@@ -44,6 +46,7 @@ class BridgeService : Service() {
     override fun onDestroy() {
         server?.stop()
         server = null
+        Logs.add("server stopped")
         super.onDestroy()
     }
 
@@ -69,31 +72,48 @@ class BridgeService : Service() {
         override fun serve(session: IHTTPSession): Response {
             return try {
                 when {
-                    session.method == Method.GET && session.uri == "/decks" ->
-                        ok(repo.decks())
+                    session.method == Method.GET && session.uri == "/decks" -> {
+                        val decks = repo.decks()
+                        Logs.add("GET /decks -> ${decks.length()} decks")
+                        ok(decks)
+                    }
 
                     session.method == Method.GET && session.uri == "/cards" -> {
                         val deckId = session.parameters["deckId"]?.firstOrNull()
-                            ?: return error(Response.Status.BAD_REQUEST, "deckId required")
-                        ok(repo.cards(deckId))
+                        if (deckId == null) {
+                            Logs.add("GET /cards -> 400 (deckId required)")
+                            return error(Response.Status.BAD_REQUEST, "deckId required")
+                        }
+                        val cards = repo.cards(deckId)
+                        Logs.add("GET /cards deckId=$deckId -> ${cards.length()} cards")
+                        ok(cards)
                     }
 
                     session.method == Method.POST && session.uri == "/review" -> {
                         val body = readBody(session)
                         val o = JSONObject(if (body.isBlank()) "{}" else body)
                         val cardId = o.optString("cardId")
-                        if (cardId.isBlank()) return error(Response.Status.BAD_REQUEST, "cardId required")
+                        if (cardId.isBlank()) {
+                            Logs.add("POST /review -> 400 (cardId required)")
+                            return error(Response.Status.BAD_REQUEST, "cardId required")
+                        }
                         val ease = o.optInt("rating", o.optInt("ease", 0))
                         val timeTaken = o.optLong("timeTaken", 0L)
                         repo.review(cardId, ease, timeTaken)
+                        Logs.add("POST /review $cardId ease=$ease")
                         ok(JSONObject().put("ok", true))
                     }
 
-                    else -> error(Response.Status.NOT_FOUND, "not found")
+                    else -> {
+                        Logs.add("${session.method} ${session.uri} -> 404")
+                        error(Response.Status.NOT_FOUND, "not found")
+                    }
                 }
             } catch (e: SecurityException) {
+                Logs.add("ERR ${session.uri}: AnkiDroid permission not granted")
                 error(SERVICE_UNAVAILABLE, "AnkiDroid permission not granted")
             } catch (e: Exception) {
+                Logs.add("ERR ${session.uri}: ${e.message}")
                 error(Response.Status.INTERNAL_ERROR, e.message ?: "error")
             }
         }

@@ -1,7 +1,7 @@
 {
   "name": "anki-pebble",
   "author": "fanu",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "keywords": ["pebble-app"],
   "private": true,
   "dependencies": {

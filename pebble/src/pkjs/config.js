@@ -7,7 +7,7 @@ module.exports = [
   },
   {
     "type": "text",
-    "defaultValue": "By default, connect to the Ishiki companion app running on this phone. The token is only needed for the legacy Python backend."
+    "defaultValue": "By default, connect to the Ishiki companion app running on this phone. The URL and the token are only needed for the legacy Python backend."
   },
   {
     "type": "section",

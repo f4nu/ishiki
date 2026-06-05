@@ -6,26 +6,47 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.text.method.ScrollingMovementMethod
 import android.widget.TextView
 
 /**
- * Minimal UI: requests the AnkiDroid permission, starts the bridge service, and shows
- * status. Everything else happens in [BridgeService].
+ * Minimal UI: requests the AnkiDroid permission, starts the bridge service, shows status,
+ * and a live log of the HTTP calls served. Everything else happens in [BridgeService].
  */
 class MainActivity : Activity() {
 
     private lateinit var status: TextView
+    private lateinit var logview: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
         status = findViewById(R.id.status)
+        logview = findViewById(R.id.logview)
+        logview.movementMethod = ScrollingMovementMethod()
         requestNeededPermissions()
     }
 
     override fun onResume() {
         super.onResume()
         refresh()
+        renderLog()
+        Logs.onChange = { runOnUiThread { renderLog() } }
+    }
+
+    override fun onPause() {
+        Logs.onChange = null
+        super.onPause()
+    }
+
+    private fun renderLog() {
+        logview.text = Logs.text()
+        // auto-scroll to the newest line
+        logview.post {
+            val layout = logview.layout ?: return@post
+            val y = layout.getLineBottom(logview.lineCount - 1) - logview.height
+            logview.scrollTo(0, if (y > 0) y else 0)
+        }
     }
 
     private fun requestNeededPermissions() {

@@ -1,130 +1,108 @@
-# anki-pebble
+# Ishiki (石記)
 
-Review your AnkiWeb cards from your wrist on a Pebble (targeting **Core Time 2** —
-200×228, 64-color, 4 buttons).
+Study your Anki flashcards from your wrist on a **Pebble Core Time 2** (`emery`, 200×228,
+64-color, 4 buttons). Pick a deck, read the front, reveal the back, grade it, move on —
+backed by your real collection.
 
-**Flow:** pick a deck → see the card front → press **Select** to reveal the back →
-**Up = OK**, **Down = Not OK** → next card.
-
-**Controls**
-- *Front:* Up/Down scroll a long question · **Select** reveals the answer
-- *Back:* **Up = OK** (green) · **Down = Not OK** (red) · **Select** pages down a long
-  answer (wraps to top). Grading flashes the screen green/red, then loads the next card.
-
-## Architecture
-
-The watch has no internet of its own; it reaches the network through a JavaScript
-sandbox inside the Pebble phone app, which calls our backend. Three tiers:
+The backend is **local**: an Android **companion app** reads and writes your on-device
+**AnkiDroid** collection and serves the watch over localhost. AnkiDroid does the AnkiWeb
+sync itself, so nothing here ever logs into AnkiWeb or touches its (private) sync protocol.
 
 ```
-Pebble watch (C)  <--AppMessage / BT-->  PebbleKit JS (phone)  <--HTTPS-->  Sync proxy (Python, this repo)  <--official anki lib-->  AnkiWeb
+AnkiWeb ⇄ AnkiDroid ⇄ (ContentProvider) Ishiki companion ⇄ (localhost:8765) PebbleKit JS ⇄ (Bluetooth) watch
 ```
 
-- **backend/** — FastAPI service. Keeps a local collection synced with AnkiWeb using
-  the official `anki` package and exposes a tiny REST API. Built first; testable with
-  no Pebble tooling.
-- **pebble/** — the watchapp (C) + PebbleKit JS bridge. Next phase; needs the Pebble SDK.
+## On the watch
 
-## Backend API
+- **Deck list** — Up/Down to move, **Select** to open. Due counts refresh each time the
+  list is shown (so they reflect what you just reviewed).
+- **Front** — Up/Down scroll a long question · **Select** reveals the answer.
+- **Back** — a colored action bar on the right edge aligned to the buttons:
+  - **Up** = ✓ **Good** (green) · **Select** = ~ **Hard** (yellow) · **Down** = ✗ **Again** (red)
+  - The screen flashes the grade's color, then the next card loads.
+  - **Hold Up/Down** to scroll a long answer.
+- If the watch can't reach the companion (Bluetooth down, app closed, AnkiDroid busy), it
+  **vibrates** instead of hanging.
 
-All requests require `Authorization: Bearer <API_TOKEN>`.
+Reviews are **store-and-forward**: a deck's due cards are fetched as a batch and queued
+reviews (with timestamps) are flushed to the companion as it becomes reachable.
+
+## Repo layout
+
+```
+companion/   Android companion app (Kotlin) — the current backend
+pebble/      Pebble watchapp (C) + PebbleKit JS bridge
+backend/     legacy Python AnkiWeb proxy (alternative — see below)
+versions     per-app versions, read by bump.sh
+bump.sh      set versions + rebuild both artifacts
+.github/workflows/release.yml   CI: build + publish the signed companion APK on a version bump
+CHANGELOG.md   companion app changelog (watch app: pebble/CHANGELOG.md)
+CLAUDE.md    full dev / handoff notes
+```
+
+## Companion app (Android)
+
+Kotlin, minimal UI, a foreground service running [NanoHTTPD](https://github.com/NanoHttpd/nanohttpd)
+on `127.0.0.1:8765` over AnkiDroid's ContentProvider:
 
 | Method | Path | Returns |
 | --- | --- | --- |
-| GET  | `/decks`               | `[{id, name, due}]` |
-| GET  | `/next?deck_id=<id>`   | `{card_id, front, back}` or `{done: true}` |
-| POST | `/answer` `{card_id, ease}` | `{ok: true}` — ease: `1` = Not OK (Again), `3` = OK (Good) |
-| POST | `/sync`                | `{result: ...}` |
+| GET  | `/decks`              | `[{id, name, due}]` |
+| GET  | `/cards?deckId=<id>`  | `[{id:"noteId:ord", front, back}]` |
+| POST | `/review` `{cardId, ease, timestamp}` | `{ok:true}` — ease `1`=Again, `2`=Hard, `3`=Good |
 
-## Watch ⇄ phone message protocol (for the upcoming `pebble/` side)
+**Build / install:**
+```bash
+cd companion
+./gradlew assembleDebug      # -> app/build/outputs/apk/debug/app-debug.apk
+```
+Or grab the APK from [Releases](../../releases). Install it, open it once, and grant the
+**AnkiDroid** permission + notifications. Requires AnkiDroid installed and signed into your
+AnkiWeb account. See [companion/README.md](companion/README.md) for details and limitations.
 
-AppMessage keys (to be declared in `package.json`):
-
-- **Watch → JS:** `CMD` (1=decks, 2=card, 3=answer, 4=sync), `DECK_ID`, `CARD_ID`, `EASE`
-- **JS → Watch:** `MSG_TYPE` (1=decks, 2=card, 3=done, 4=error),
-  `DECKS` (newline-joined rows `id\tname\tdue`), `FRONT`, `BACK`, `CARD_ID`, `ERR`
-
-## Setup — backend
-
-Requires Python 3.10+ (3.12 confirmed).
+## Watch app (Pebble)
 
 ```bash
-cd backend
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env        # then edit: AnkiWeb creds + a random API_TOKEN
-uvicorn app:app --host 0.0.0.0 --port 8000
+cd pebble
+pebble build                 # -> build/pebble.pbw   (needs the Pebble SDK; see CLAUDE.md)
 ```
+Sideload `pebble.pbw` with the Pebble (Core Devices) app (Android: file manager or Rebble's
+*Sideload Helper*; iOS: the Pebble Core share sheet). Then open the app's **Settings** on
+the phone and set **Backend URL** = `http://127.0.0.1:8765` (leave the token blank — the
+companion is local and unauthenticated).
 
-On first start it does a **one-time full download** of your collection from AnkiWeb
-into `backend/data/`. Subsequent reviews sync incrementally.
+## Releases & versioning
 
-Quick test:
-
+The two apps version independently in [versions](versions):
+```
+companion=0.2.0
+pebble=0.2.0
+```
+[bump.sh](bump.sh) applies them and rebuilds both:
 ```bash
-TOKEN=...   # the API_TOKEN you set in .env
-curl -H "Authorization: Bearer $TOKEN" localhost:8000/decks
+./bump.sh                    # apply versions/ and rebuild both
+./bump.sh companion 0.3.0    # set companion's version, then apply + rebuild
+./bump.sh pebble 1.1.0       # set pebble's version, then apply + rebuild
 ```
+Pushing to `main` triggers [the release workflow](.github/workflows/release.yml): when the
+**companion** version is one that hasn't been released yet, it builds the APK and publishes
+a `v<version>` GitHub Release. With the signing secrets set (`KEYSTORE_B64`,
+`KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`) the APK is release-signed; otherwise it
+falls back to a debug build.
 
-Or verify the core logic **offline, no AnkiWeb account needed** (builds a throwaway
-collection and exercises decks / next / answer / text-cleaning):
+## Limitations
 
-```bash
-cd backend && . .venv/bin/activate && python smoke_test.py
-```
+- The companion's AnkiDroid calls (deck query, card columns, review `update`) are
+  AnkiDroid-version-sensitive and **not yet verified on a physical device**.
+- **No backdating** — AnkiDroid records a review at submit time; same-day reviews are fine
+  (Anki intervals are day-granular), only reviews queued across midnight can drift.
+- On the answer screen single-press grades; **hold** Up/Down to scroll a long answer.
 
-## Deploy to a server (Docker)
+## Legacy: Python AnkiWeb proxy (`backend/`)
 
-The backend is containerized ([backend/Dockerfile](backend/Dockerfile),
-[backend/docker-compose.yml](backend/docker-compose.yml)). On your server:
-
-```bash
-cd backend
-cp .env.example .env        # set ANKI_USERNAME/PASSWORD + API_TOKEN=$(openssl rand -hex 32)
-docker compose up -d --build
-docker compose logs -f      # watch for "initial sync: full_download (3)"
-```
-
-- The collection persists in the `anki-data` volume; reviews **auto-sync** to AnkiWeb
-  every `SYNC_INTERVAL` seconds (default 120) — no manual `/sync` needed.
-- The container listens on **127.0.0.1:8000** (plain HTTP). **Put your own TLS reverse
-  proxy in front** and serve it as `https://your-host` — phones block cleartext HTTP, so
-  HTTPS is required. (If your proxy is also in Docker, drop the `127.0.0.1` binding and
-  join them on a shared network.)
-- Only **one worker** runs — the anki collection is single-writer; don't scale it.
-
-## Install on your watch
-
-1. Build: `cd pebble && pebble build` → `pebble/build/pebble.pbw`.
-2. Get `pebble.pbw` onto your phone (AirDrop / email / cloud / cable).
-3. Open it with the **Pebble (Core Devices) app** — Android: via the file manager or
-   Rebble's *Sideload Helper*; iOS: share to the Pebble Core app. It installs to the watch.
-4. In the Pebble app, open the **Anki** app's **Settings** gear and set:
-   - **Backend URL** = `https://your-host` (your proxied backend)
-   - **API Token** = the `API_TOKEN` from the server's `.env`
-5. Launch **Anki** on the watch — decks load, and you can study.
-
-> The bearer token is the only guard on the API — keep the URL private and use HTTPS.
-
-## Roadmap
-
-- [x] Decide architecture (custom sync proxy) + target (Core Time 2)
-- [x] **Backend** — `decks` / `next` / `answer` built & validated against anki 25.09.4
-- [x] **Backend** — AnkiWeb `sync` working end-to-end (full download validated)
-- [x] Pebble toolchain + SDK 4.9.169 installed
-- [x] **Watchapp + PebbleKit JS bridge** — builds to `.pbw` for emery
-- [x] Run in emulator + end-to-end study loop
-- [x] Settings page (Clay): backend URL + API token, set on the phone
-- [x] Color cues (green OK / red Not OK + grade flash) and long-card scrolling
-- [x] Dockerized backend + background auto-sync; sideload + settings for real watch
-
-## Caveats (personal use)
-
-- AnkiWeb has no official public API; this uses Anki's own `anki` library to sync
-  *your own* account. Fine for personal use.
-- MVP card selection queries due/new cards directly rather than fully driving the v3
-  scheduler queue (daily limits / sibling burying not enforced yet). Answers still feed
-  the real scheduler, so AnkiWeb stays correct.
-- `sync_login` can block briefly, and first-run full-download handling is the
-  known-fragile bit — hardened on the first real sync.
+Before the companion, the backend was a Python/FastAPI service that synced AnkiWeb directly
+with the official `anki` library and exposed `/decks /next /answer /sync`. It still works
+(Dockerized, background auto-sync) and is kept as an alternative for setups without
+AnkiDroid, but the on-device companion is the recommended path (no AnkiWeb credentials, no
+reverse-engineered protocol, no server to host). Setup is in [backend/](backend/) and the
+rationale is in [CLAUDE.md](CLAUDE.md).

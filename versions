@@ -1,4 +1,4 @@
 # Per-app versions (semver). Edit a value then run ./bump.sh
 # (or: ./bump.sh companion 0.3.0  /  ./bump.sh pebble 1.1.0)
-companion=0.2.0
-pebble=0.2.0
+companion=0.2.1
+pebble=0.2.2
