@@ -10,14 +10,16 @@
 #define MSG_CARD  2
 #define MSG_DONE  3
 #define MSG_ERROR 4
-// Anki ease values
-#define EASE_AGAIN 1  // "Not OK"
-#define EASE_GOOD  3  // "OK"
+// Anki ease values (right-side action bar)
+#define EASE_AGAIN 1  // red cross  (Down)
+#define EASE_HARD  2  // yellow ~   (Select)
+#define EASE_GOOD  3  // green check (Up)
 
 #define MAX_DECKS      40
 #define DECK_NAME_LEN  48
 #define ID_LEN         24
 #define TEXT_LEN       1024
+#define BAR_W          30   // right-side action bar width
 
 // ---- deck list state -------------------------------------------------------
 static char s_deck_ids[MAX_DECKS][ID_LEN];
@@ -35,15 +37,21 @@ static char s_back[TEXT_LEN];
 typedef enum { CARD_LOADING, CARD_FRONT, CARD_BACK, CARD_INFO } CardState;
 static CardState s_card_state = CARD_LOADING;
 
+// Answer flash: hold the green/red/yellow wash for a fixed time even though the next
+// card (served from the JS cache) arrives almost instantly. The incoming card/done is
+// buffered and shown when the flash ends.
+#define FLASH_MS 550
+typedef enum { PEND_NONE, PEND_CARD, PEND_DONE } Pending;
+static bool s_flashing = false;
+static Pending s_pending = PEND_NONE;
+
 // ---- windows ---------------------------------------------------------------
 static Window *s_menu_window;
 static MenuLayer *s_menu_layer;
 static Window *s_card_window;
 static ScrollLayer *s_scroll;
 static TextLayer *s_card_text;
-static TextLayer *s_hint;   // neutral hint (front / info)
-static TextLayer *s_ok;     // green "UP = OK" (back)
-static TextLayer *s_again;  // red "DOWN = Again" (back)
+static Layer *s_bar;   // right-side action bar (drawn glyphs, no images)
 static bool s_card_loaded = false;
 
 // Connection watchdog: vibrate if a request to the phone/companion doesn't complete.
@@ -147,64 +155,114 @@ static void scroll_page(int dir) {  // dir: -1 up, +1 down
   scroll_layer_set_content_offset(s_scroll, GPoint(0, ny), true);
 }
 
-static void select_page_or_wrap(void) {
-  GSize cs = scroll_layer_get_content_size(s_scroll);
-  int vis = layer_get_bounds(scroll_layer_get_layer(s_scroll)).size.h;
-  GPoint off = scroll_layer_get_content_offset(s_scroll);
-  int min_y = vis - cs.h;
-  if (min_y > 0) min_y = 0;
-  if (off.y <= min_y) {
-    scroll_layer_set_content_offset(s_scroll, GPoint(0, 0), true);  // wrap to top
-  } else {
-    scroll_page(+1);
+// ---- right-side action bar (drawn, no image resources) ---------------------
+static void draw_check(GContext *ctx, int cx, int cy) {  // green ✓ = Good
+  graphics_context_set_stroke_color(ctx, GColorGreen);
+  graphics_context_set_stroke_width(ctx, 3);
+  graphics_draw_line(ctx, GPoint(cx - 7, cy + 1), GPoint(cx - 2, cy + 6));
+  graphics_draw_line(ctx, GPoint(cx - 2, cy + 6), GPoint(cx + 8, cy - 7));
+}
+
+static void draw_tilde(GContext *ctx, int cx, int cy) {  // yellow ~ = Hard
+  graphics_context_set_stroke_color(ctx, GColorYellow);
+  graphics_context_set_stroke_width(ctx, 3);
+  graphics_draw_line(ctx, GPoint(cx - 9, cy + 2), GPoint(cx - 3, cy - 3));
+  graphics_draw_line(ctx, GPoint(cx - 3, cy - 3), GPoint(cx + 3, cy + 3));
+  graphics_draw_line(ctx, GPoint(cx + 3, cy + 3), GPoint(cx + 9, cy - 2));
+}
+
+static void draw_cross(GContext *ctx, int cx, int cy) {  // red ✗ = Again
+  graphics_context_set_stroke_color(ctx, GColorRed);
+  graphics_context_set_stroke_width(ctx, 3);
+  graphics_draw_line(ctx, GPoint(cx - 7, cy - 7), GPoint(cx + 7, cy + 7));
+  graphics_draw_line(ctx, GPoint(cx - 7, cy + 7), GPoint(cx + 7, cy - 7));
+}
+
+static void draw_reveal(GContext *ctx, int cx, int cy) {  // white play-triangle = "show"
+  graphics_context_set_stroke_color(ctx, GColorWhite);
+  graphics_context_set_stroke_width(ctx, 1);
+  for (int i = 0; i <= 10; i++) {
+    int x = cx - 5 + i;
+    int h = (10 - i) * 7 / 10;
+    graphics_draw_line(ctx, GPoint(x, cy - h), GPoint(x, cy + h));
   }
 }
 
-// ---- card states -----------------------------------------------------------
-static void show_cues(bool on_back) {
-  layer_set_hidden(text_layer_get_layer(s_ok), !on_back);
-  layer_set_hidden(text_layer_get_layer(s_again), !on_back);
-  layer_set_hidden(text_layer_get_layer(s_hint), on_back);
+static void draw_chevron(GContext *ctx, int cx, int cy, bool up) {  // grey scroll hint
+  graphics_context_set_stroke_color(ctx, GColorLightGray);
+  graphics_context_set_stroke_width(ctx, 2);
+  int dy = up ? 3 : -3;
+  graphics_draw_line(ctx, GPoint(cx - 6, cy + dy), GPoint(cx, cy - dy));
+  graphics_draw_line(ctx, GPoint(cx, cy - dy), GPoint(cx + 6, cy + dy));
 }
 
+static void bar_update_proc(Layer *layer, GContext *ctx) {
+  GRect b = layer_get_bounds(layer);
+  graphics_context_set_fill_color(ctx, GColorBlack);
+  graphics_fill_rect(ctx, b, 0, GCornerNone);
+
+  int cx = b.size.w / 2;
+  int up_y = b.size.h / 5;
+  int mid_y = b.size.h / 2;
+  int dn_y = b.size.h * 4 / 5;
+
+  if (s_card_state == CARD_BACK) {
+    draw_check(ctx, cx, up_y);   // Up    = Good
+    draw_tilde(ctx, cx, mid_y);  // Select = Hard
+    draw_cross(ctx, cx, dn_y);   // Down  = Again
+  } else if (s_card_state == CARD_FRONT) {
+    draw_chevron(ctx, cx, up_y, true);   // Up   = scroll up
+    draw_reveal(ctx, cx, mid_y);         // Select = reveal answer
+    draw_chevron(ctx, cx, dn_y, false);  // Down = scroll down
+  }
+  // CARD_LOADING / CARD_INFO: plain black bar
+}
+
+static void mark_bar(void) { if (s_bar) layer_mark_dirty(s_bar); }
+
+// ---- card states -----------------------------------------------------------
 static void show_front(void) {
   if (!s_card_loaded) return;
   s_card_state = CARD_FRONT;
   window_set_background_color(s_card_window, GColorWhite);
   set_card_text(s_front);
-  show_cues(false);
-  text_layer_set_text(s_hint, "SELECT = Answer");
+  mark_bar();
 }
 
-static void show_info(const char *body, const char *hint) {
+static void show_info(const char *body) {
   if (!s_card_loaded) return;
   s_card_state = CARD_INFO;
   window_set_background_color(s_card_window, GColorWhite);
   set_card_text(body);
-  show_cues(false);
-  text_layer_set_text(s_hint, hint);
+  mark_bar();
 }
 
 static void reveal_back(void) {
   s_card_state = CARD_BACK;
   set_card_text(s_back);
-  show_cues(true);
+  mark_bar();
 }
 
-static void revert_bg(void *data) {
-  if (s_card_window) window_set_background_color(s_card_window, GColorWhite);
+static void flash_done(void *data) {
+  s_flashing = false;
+  if (!s_card_loaded) return;
+  window_set_background_color(s_card_window, GColorWhite);
+  if (s_card_state != CARD_LOADING) return;  // e.g. an error already took over
+  if (s_pending == PEND_CARD) { s_pending = PEND_NONE; show_front(); }
+  else if (s_pending == PEND_DONE) { s_pending = PEND_NONE; show_info("Deck finished"); }
+  else { set_card_text("Loading..."); mark_bar(); }  // next card not here yet
 }
 
 static void grade(int ease, GColor flash) {
   if (s_card_state != CARD_BACK) return;
   send_answer(s_card_id, ease, s_current_deck_id);
   s_card_state = CARD_LOADING;
+  s_pending = PEND_NONE;
+  s_flashing = true;
   if (s_card_loaded) {
-    window_set_background_color(s_card_window, flash);
-    set_card_text("Loading...");
-    show_cues(false);
-    text_layer_set_text(s_hint, "");
-    app_timer_register(250, revert_bg, NULL);
+    window_set_background_color(s_card_window, flash);  // wash stays under the answer text
+    mark_bar();                                         // bar -> plain black
+    app_timer_register(FLASH_MS, flash_done, NULL);
   }
 }
 
@@ -212,11 +270,11 @@ static void grade(int ease, GColor flash) {
 static void card_select_click(ClickRecognizerRef rec, void *ctx) {
   if (!s_card_loaded) return;
   if (s_card_state == CARD_FRONT) reveal_back();
-  else if (s_card_state == CARD_BACK) select_page_or_wrap();
+  else if (s_card_state == CARD_BACK) grade(EASE_HARD, GColorYellow);
 }
 
 static void card_up_click(ClickRecognizerRef rec, void *ctx) {
-  if (s_card_state == CARD_BACK) grade(EASE_GOOD, GColorIslamicGreen);
+  if (s_card_state == CARD_BACK) grade(EASE_GOOD, GColorGreen);
   else scroll_page(-1);
 }
 
@@ -236,7 +294,7 @@ static void card_window_load(Window *w) {
   Layer *root = window_get_root_layer(w);
   GRect b = layer_get_bounds(root);
 
-  GRect scroll_frame = GRect(2, 4, b.size.w - 4, b.size.h - 50);
+  GRect scroll_frame = GRect(2, 4, b.size.w - BAR_W - 4, b.size.h - 8);
   s_scroll = scroll_layer_create(scroll_frame);
   scroll_layer_set_shadow_hidden(s_scroll, true);
   layer_add_child(root, scroll_layer_get_layer(s_scroll));
@@ -249,39 +307,20 @@ static void card_window_load(Window *w) {
   text_layer_set_overflow_mode(s_card_text, GTextOverflowModeWordWrap);
   scroll_layer_add_child(s_scroll, text_layer_get_layer(s_card_text));
 
-  s_hint = text_layer_create(GRect(0, b.size.h - 26, b.size.w, 22));
-  text_layer_set_text_alignment(s_hint, GTextAlignmentCenter);
-  text_layer_set_font(s_hint, fonts_get_system_font(FONT_KEY_GOTHIC_18));
-  layer_add_child(root, text_layer_get_layer(s_hint));
-
-  s_ok = text_layer_create(GRect(0, b.size.h - 46, b.size.w, 22));
-  text_layer_set_text_alignment(s_ok, GTextAlignmentCenter);
-  text_layer_set_font(s_ok, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_text_color(s_ok, GColorIslamicGreen);
-  text_layer_set_text(s_ok, "UP = OK");
-  layer_add_child(root, text_layer_get_layer(s_ok));
-
-  s_again = text_layer_create(GRect(0, b.size.h - 24, b.size.w, 22));
-  text_layer_set_text_alignment(s_again, GTextAlignmentCenter);
-  text_layer_set_font(s_again, fonts_get_system_font(FONT_KEY_GOTHIC_18_BOLD));
-  text_layer_set_text_color(s_again, GColorRed);
-  text_layer_set_text(s_again, "DOWN = Again");
-  layer_add_child(root, text_layer_get_layer(s_again));
+  s_bar = layer_create(GRect(b.size.w - BAR_W, 0, BAR_W, b.size.h));
+  layer_set_update_proc(s_bar, bar_update_proc);
+  layer_add_child(root, s_bar);
 
   s_card_loaded = true;
   s_card_state = CARD_LOADING;
-  show_cues(false);
   set_card_text("Loading...");
-  text_layer_set_text(s_hint, "");
 }
 
 static void card_window_unload(Window *w) {
   s_card_loaded = false;
   text_layer_destroy(s_card_text);
   scroll_layer_destroy(s_scroll);
-  text_layer_destroy(s_hint);
-  text_layer_destroy(s_ok);
-  text_layer_destroy(s_again);
+  layer_destroy(s_bar);
 }
 
 static void show_card_window(void) {
@@ -343,6 +382,12 @@ static void menu_window_unload(Window *w) {
   s_menu_layer = NULL;
 }
 
+// Fires when the deck list becomes visible (first show, and on Back from a deck):
+// refresh the due counts so they reflect cards just reviewed.
+static void menu_window_appear(Window *w) {
+  send_get_decks();
+}
+
 // ---- connection watchdog ---------------------------------------------------
 static void clear_req_timer(void) {
   if (s_req_timer) {
@@ -355,7 +400,7 @@ static void req_timeout(void *data) {
   s_req_timer = NULL;
   vibes_double_pulse();  // nothing replied — the connection didn't go all the way
   if (s_card_loaded && s_card_state == CARD_LOADING) {
-    show_info("Not connected", "BACK = decks");
+    show_info("Not connected");
   }
 }
 
@@ -386,18 +431,18 @@ static void inbox_received(DictionaryIterator *iter, void *context) {
       if (f) { strncpy(s_front, f->value->cstring, TEXT_LEN - 1); s_front[TEXT_LEN - 1] = '\0'; }
       if (b) { strncpy(s_back, b->value->cstring, TEXT_LEN - 1); s_back[TEXT_LEN - 1] = '\0'; }
       if (c) { strncpy(s_card_id, c->value->cstring, ID_LEN - 1); s_card_id[ID_LEN - 1] = '\0'; }
-      show_front();
+      if (s_flashing) s_pending = PEND_CARD; else show_front();  // wait out the flash
       break;
     }
     case MSG_DONE:
-      show_info("Deck finished", "BACK = decks");
+      if (s_flashing) s_pending = PEND_DONE; else show_info("Deck finished");
       break;
     case MSG_ERROR: {
       Tuple *e = dict_find(iter, MESSAGE_KEY_ERR);
       const char *msg = e ? e->value->cstring : "Error";
       APP_LOG(APP_LOG_LEVEL_ERROR, "backend error: %s", msg);
       vibes_double_pulse();  // bridge couldn't reach the companion / AnkiDroid
-      show_info(msg, "BACK = decks");
+      show_info(msg);
       break;
     }
   }
@@ -425,12 +470,11 @@ static void init(void) {
   s_menu_window = window_create();
   window_set_window_handlers(s_menu_window, (WindowHandlers) {
     .load = menu_window_load,
+    .appear = menu_window_appear,  // refreshes decks on show + on return from a deck
     .unload = menu_window_unload,
   });
   window_stack_push(s_menu_window, true);
-
-  // JS also fetches decks on 'ready'; this covers the case where JS is already up.
-  send_get_decks();
+  // (menu .appear requests decks; JS also pushes them on 'ready')
 }
 
 static void deinit(void) {
