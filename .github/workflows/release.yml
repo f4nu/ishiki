@@ -1,0 +1,105 @@
+name: Release companion APK
+
+# Build the companion APK and publish it as a GitHub Release whenever the version
+# in companion/app/build.gradle.kts is one that hasn't been released yet. Pushing
+# without bumping the version is a no-op (the release for that version exists).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write   # needed to create releases + tags
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: ver
+        run: |
+          V=$(grep -oP 'versionName\s*=\s*"\K[^"]+' companion/app/build.gradle.kts)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "version = $V"
+
+      - name: Has this version been released?
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "v${{ steps.ver.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "v${{ steps.ver.outputs.version }} already released — skipping."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Set up JDK 17
+        if: steps.check.outputs.exists == 'false'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Decode signing keystore
+        if: steps.check.outputs.exists == 'false'
+        id: ks
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No KEYSTORE_B64 secret — building an unsigned debug APK."
+          fi
+
+      - name: Build APK
+        if: steps.check.outputs.exists == 'false'
+        working-directory: companion
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          chmod +x ./gradlew
+          if [ "${{ steps.ks.outputs.signed }}" = "true" ]; then
+            KEYSTORE_FILE="$RUNNER_TEMP/release.jks" ./gradlew --no-daemon assembleRelease
+          else
+            ./gradlew --no-daemon assembleDebug
+          fi
+
+      - name: Prepare asset + notes
+        if: steps.check.outputs.exists == 'false'
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          if [ "${{ steps.ks.outputs.signed }}" = "true" ]; then
+            cp companion/app/build/outputs/apk/release/app-release.apk "ishiki-companion-$V.apk"
+          else
+            cp companion/app/build/outputs/apk/debug/app-debug.apk "ishiki-companion-$V.apk"
+          fi
+          # Pull this version's section out of CHANGELOG.md for the release notes.
+          awk -v v="$V" '
+            /^## / { if (p) exit }
+            $0 ~ ("^## " v "([ ]|$)") { p=1 }
+            p { print }
+          ' CHANGELOG.md > notes.md || true
+          [ -s notes.md ] || echo "Release $V" > notes.md
+
+      - name: Create release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.ver.outputs.version }}"
+          gh release create "v$V" "ishiki-companion-$V.apk" \
+            --title "v$V" --notes-file notes.md

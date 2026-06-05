@@ -22,5 +22,10 @@ companion/.idea/
 *.apk
 *.aab
 
+# signing keys — NEVER commit these
+*.jks
+*.keystore
+*.b64
+
 # misc
 .DS_Store

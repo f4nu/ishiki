@@ -15,9 +15,26 @@ android {
         versionName = "0.2.0"
     }
 
+    signingConfigs {
+        create("release") {
+            // Configured only when a keystore is provided via env (CI secrets).
+            // Without it, a release build is simply unsigned, so local and F-Droid
+            // builds still work.
+            System.getenv("KEYSTORE_FILE")?.let { ks ->
+                storeFile = file(ks)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("KEY_ALIAS")
+                keyPassword = System.getenv("KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
+            if (System.getenv("KEYSTORE_FILE") != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 
